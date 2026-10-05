@@ -1,9 +1,11 @@
 ﻿using FixFlow.Domain.Entities;
+using FixFlow.Infrastructure.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace FixFlow.Infrastructure.Persistence;
 
-public class AppDbContext : DbContext
+public class AppDbContext : IdentityDbContext<ApplicationUser>
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -16,6 +18,9 @@ public class AppDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // مهم جداً: لازم يتنادى الأول عشان جداول Identity تتعمل
+        base.OnModelCreating(modelBuilder);
+
         modelBuilder.Entity<ServiceCategory>(e =>
         {
             e.Property(x => x.Name).IsRequired().HasMaxLength(100);
