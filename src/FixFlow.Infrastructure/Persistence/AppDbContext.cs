@@ -34,6 +34,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<TechnicianProfile>(e =>
         {
+            e.Property(x => x.UserId).IsRequired().HasMaxLength(450);
+            e.HasIndex(x => x.UserId).IsUnique();   // ملف فني واحد لكل مستخدم
+
             e.Property(x => x.FullName).IsRequired().HasMaxLength(150);
             e.Property(x => x.PhoneNumber).IsRequired().HasMaxLength(20);
             e.HasOne(x => x.ServiceCategory)
@@ -44,6 +47,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<ServiceRequest>(e =>
         {
+            e.Property(x => x.CustomerId).IsRequired().HasMaxLength(450);
+            e.HasIndex(x => x.CustomerId);
+            e.HasIndex(x => x.Status);
+
             e.Property(x => x.Title).IsRequired().HasMaxLength(200);
             e.Property(x => x.Description).IsRequired().HasMaxLength(2000);
             e.Property(x => x.Address).IsRequired().HasMaxLength(500);
@@ -82,6 +89,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<Notification>(e =>
         {
+            e.Property(x => x.UserId).IsRequired().HasMaxLength(450);
+            e.HasIndex(x => x.UserId);
             e.Property(x => x.Message).IsRequired().HasMaxLength(500);
         });
     }

@@ -1,6 +1,7 @@
 ﻿using FixFlow.Application.Interfaces;
 using FixFlow.Infrastructure.Identity;
 using FixFlow.Infrastructure.Persistence;
+using FixFlow.Infrastructure.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -36,6 +37,9 @@ public static class DependencyInjection
 
         // الخدمات
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<ICategoryService, CategoryService>();
+        services.AddScoped<ITechnicianService, TechnicianService>();
+        services.AddScoped<IServiceRequestService, ServiceRequestService>();
 
         return services;
     }
