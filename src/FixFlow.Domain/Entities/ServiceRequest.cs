@@ -5,7 +5,7 @@ namespace FixFlow.Domain.Entities;
 
 public class ServiceRequest : BaseEntity
 {
-    public string CustomerId { get; set; } = string.Empty;   // هيتربط بـ Identity في المرحلة 2
+    public string CustomerId { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string Address { get; set; } = string.Empty;
@@ -22,11 +22,16 @@ public class ServiceRequest : BaseEntity
     public TechnicianProfile? TechnicianProfile { get; set; }
 
     public DateTime? AssignedAt { get; set; }
+
+    // آخر وقت يرد فيه الفني على العرض (هنفعّله بـ Hangfire في المرحلة 5)
+    public DateTime? AssignmentExpiresAt { get; set; }
+
     public DateTime? CompletedAt { get; set; }
 
     // رابط التتبع (Quick Share) بدون تسجيل دخول
     public Guid TrackingToken { get; set; } = Guid.NewGuid();
 
     public ICollection<RequestPhoto> Photos { get; set; } = new List<RequestPhoto>();
+    public ICollection<RequestRejection> Rejections { get; set; } = new List<RequestRejection>();
     public Review? Review { get; set; }
 }

@@ -13,6 +13,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<TechnicianProfile> TechnicianProfiles => Set<TechnicianProfile>();
     public DbSet<ServiceRequest> ServiceRequests => Set<ServiceRequest>();
     public DbSet<RequestPhoto> RequestPhotos => Set<RequestPhoto>();
+    public DbSet<RequestRejection> RequestRejections => Set<RequestRejection>();
     public DbSet<Review> Reviews => Set<Review>();
     public DbSet<Notification> Notifications => Set<Notification>();
 
@@ -76,6 +77,24 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
              .WithMany(r => r.Photos)
              .HasForeignKey(x => x.ServiceRequestId)
              .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RequestRejection>(e =>
+        {
+            e.Property(x => x.Reason).HasMaxLength(300);
+
+            // الفني يرفض الطلب الواحد مرة واحدة بس
+            e.HasIndex(x => new { x.ServiceRequestId, x.TechnicianProfileId }).IsUnique();
+
+            e.HasOne(x => x.ServiceRequest)
+             .WithMany(r => r.Rejections)
+             .HasForeignKey(x => x.ServiceRequestId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasOne(x => x.TechnicianProfile)
+             .WithMany()
+             .HasForeignKey(x => x.TechnicianProfileId)
+             .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Review>(e =>

@@ -1,6 +1,7 @@
 ﻿using FixFlow.Application.Common;
 using FixFlow.Application.Interfaces;
 using FixFlow.Application.Requests;
+using FixFlow.Domain.Common;
 using FixFlow.Domain.Entities;
 using FixFlow.Domain.Enums;
 using FixFlow.Infrastructure.Persistence;
@@ -11,10 +12,12 @@ namespace FixFlow.Infrastructure.Services;
 public class ServiceRequestService : IServiceRequestService
 {
     private readonly AppDbContext _db;
+    private readonly IAssignmentService _assignment;
 
-    public ServiceRequestService(AppDbContext db)
+    public ServiceRequestService(AppDbContext db, IAssignmentService assignment)
     {
         _db = db;
+        _assignment = assignment;
     }
 
     public async Task<Result<ServiceRequestDto>> CreateAsync(string customerId, CreateServiceRequestRequest request)
@@ -39,7 +42,13 @@ public class ServiceRequestService : IServiceRequestService
         _db.ServiceRequests.Add(entity);
         await _db.SaveChangesAsync();
 
-        return Result<ServiceRequestDto>.Ok(ToDto(entity));
+        // التعيين التلقائي: لو ملقاش فني، الطلب يفضل Pending
+        await _assignment.TryAssignAsync(entity.Id);
+
+        var created = await _db.ServiceRequests.AsNoTracking().WithDetails()
+            .FirstAsync(r => r.Id == entity.Id);
+
+        return Result<ServiceRequestDto>.Ok(created.ToDto());
     }
 
     public async Task<Result<PagedResult<ServiceRequestDto>>> GetAllAsync(
@@ -50,11 +59,11 @@ public class ServiceRequestService : IServiceRequestService
 
         IQueryable<ServiceRequest> query = _db.ServiceRequests.AsNoTracking();
 
-        if (role == AppRolesNames.Customer)
+        if (role == AppRoles.Customer)
         {
             query = query.Where(r => r.CustomerId == userId);
         }
-        else if (role == AppRolesNames.Technician)
+        else if (role == AppRoles.Technician)
         {
             var techId = await GetTechnicianProfileIdAsync(userId);
             if (techId is null)
@@ -66,7 +75,7 @@ public class ServiceRequestService : IServiceRequestService
 
             query = query.Where(r => r.TechnicianProfileId == techId);
         }
-        else if (role != AppRolesNames.Admin)
+        else if (role != AppRoles.Admin)
         {
             return Result<PagedResult<ServiceRequestDto>>.Fail("Forbidden.", ErrorType.Forbidden);
         }
@@ -83,7 +92,7 @@ public class ServiceRequestService : IServiceRequestService
 
         var total = await query.CountAsync();
 
-        var items = await WithDetails(query)
+        var items = await query.WithDetails()
             .OrderByDescending(r => r.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -91,7 +100,7 @@ public class ServiceRequestService : IServiceRequestService
 
         return Result<PagedResult<ServiceRequestDto>>.Ok(new PagedResult<ServiceRequestDto>
         {
-            Items = items.Select(ToDto).ToList(),
+            Items = items.Select(r => r.ToDto()).ToList(),
             Page = page,
             PageSize = pageSize,
             TotalCount = total
@@ -100,16 +109,16 @@ public class ServiceRequestService : IServiceRequestService
 
     public async Task<Result<ServiceRequestDto>> GetByIdAsync(int id, string userId, string role)
     {
-        var request = await WithDetails(_db.ServiceRequests.AsNoTracking())
+        var request = await _db.ServiceRequests.AsNoTracking().WithDetails()
             .FirstOrDefaultAsync(r => r.Id == id);
 
         if (request is null)
             return Result<ServiceRequestDto>.Fail("Request not found.", ErrorType.NotFound);
 
-        var allowed = role == AppRolesNames.Admin
-                      || (role == AppRolesNames.Customer && request.CustomerId == userId);
+        var allowed = role == AppRoles.Admin
+                      || (role == AppRoles.Customer && request.CustomerId == userId);
 
-        if (!allowed && role == AppRolesNames.Technician)
+        if (!allowed && role == AppRoles.Technician)
         {
             var techId = await GetTechnicianProfileIdAsync(userId);
             allowed = techId is not null && request.TechnicianProfileId == techId;
@@ -118,27 +127,23 @@ public class ServiceRequestService : IServiceRequestService
         if (!allowed)
             return Result<ServiceRequestDto>.Fail("You are not allowed to view this request.", ErrorType.Forbidden);
 
-        return Result<ServiceRequestDto>.Ok(ToDto(request));
+        return Result<ServiceRequestDto>.Ok(request.ToDto());
     }
 
     public async Task<Result<ServiceRequestDto>> CancelAsync(int id, string userId, string role)
     {
-        var request = await WithDetails(_db.ServiceRequests).FirstOrDefaultAsync(r => r.Id == id);
+        var request = await _db.ServiceRequests.WithDetails().FirstOrDefaultAsync(r => r.Id == id);
 
         if (request is null)
             return Result<ServiceRequestDto>.Fail("Request not found.", ErrorType.NotFound);
 
-        var allowed = role == AppRolesNames.Admin
-                      || (role == AppRolesNames.Customer && request.CustomerId == userId);
+        var allowed = role == AppRoles.Admin
+                      || (role == AppRoles.Customer && request.CustomerId == userId);
 
         if (!allowed)
             return Result<ServiceRequestDto>.Fail("You are not allowed to cancel this request.", ErrorType.Forbidden);
 
-        var cancellable = request.Status is RequestStatus.Pending
-                          or RequestStatus.Assigned
-                          or RequestStatus.Accepted;
-
-        if (!cancellable)
+        if (!RequestStateMachine.CanTransition(request.Status, RequestStatus.Cancelled))
             return Result<ServiceRequestDto>.Fail(
                 $"A request with status '{request.Status}' can no longer be cancelled.",
                 ErrorType.Validation);
@@ -147,12 +152,12 @@ public class ServiceRequestService : IServiceRequestService
         request.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        return Result<ServiceRequestDto>.Ok(ToDto(request));
+        return Result<ServiceRequestDto>.Ok(request.ToDto());
     }
 
     public async Task<Result<TrackingDto>> TrackAsync(Guid token)
     {
-        var request = await WithDetails(_db.ServiceRequests.AsNoTracking())
+        var request = await _db.ServiceRequests.AsNoTracking().WithDetails()
             .FirstOrDefaultAsync(r => r.TrackingToken == token);
 
         if (request is null)
@@ -174,8 +179,6 @@ public class ServiceRequestService : IServiceRequestService
         });
     }
 
-    // ---------- Helpers ----------
-
     private async Task<int?> GetTechnicianProfileIdAsync(string userId)
     {
         return await _db.TechnicianProfiles
@@ -183,43 +186,4 @@ public class ServiceRequestService : IServiceRequestService
             .Select(t => (int?)t.Id)
             .FirstOrDefaultAsync();
     }
-
-    private static IQueryable<ServiceRequest> WithDetails(IQueryable<ServiceRequest> query)
-    {
-        return query
-            .Include(r => r.ServiceCategory)
-            .Include(r => r.TechnicianProfile)
-            .Include(r => r.Photos);
-    }
-
-    private static ServiceRequestDto ToDto(ServiceRequest r) => new()
-    {
-        Id = r.Id,
-        Title = r.Title,
-        Description = r.Description,
-        Address = r.Address,
-        Latitude = r.Latitude,
-        Longitude = r.Longitude,
-        Status = r.Status.ToString(),
-        ServiceCategoryId = r.ServiceCategoryId,
-        ServiceCategoryName = r.ServiceCategory?.Name ?? string.Empty,
-        TechnicianProfileId = r.TechnicianProfileId,
-        TechnicianName = r.TechnicianProfile?.FullName,
-        TechnicianPhone = r.TechnicianProfile?.PhoneNumber,
-        TrackingToken = r.TrackingToken,
-        CreatedAt = r.CreatedAt,
-        AssignedAt = r.AssignedAt,
-        CompletedAt = r.CompletedAt,
-        Photos = r.Photos
-            .Select(p => new PhotoDto { Url = p.Url, Type = p.Type.ToString() })
-            .ToList()
-    };
-}
-
-// أسماء الأدوار (نفس قيم AppRoles في Application)
-internal static class AppRolesNames
-{
-    public const string Customer = FixFlow.Application.Common.AppRoles.Customer;
-    public const string Technician = FixFlow.Application.Common.AppRoles.Technician;
-    public const string Admin = FixFlow.Application.Common.AppRoles.Admin;
 }

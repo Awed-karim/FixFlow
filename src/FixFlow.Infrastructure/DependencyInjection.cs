@@ -2,6 +2,7 @@
 using FixFlow.Infrastructure.Identity;
 using FixFlow.Infrastructure.Persistence;
 using FixFlow.Infrastructure.Services;
+using FixFlow.Infrastructure.Storage;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -31,8 +32,11 @@ public static class DependencyInjection
             .AddRoles<IdentityRole>()
             .AddEntityFrameworkStores<AppDbContext>();
 
-        // JWT
+        // الإعدادات
         services.Configure<JwtSettings>(configuration.GetSection("Jwt"));
+        services.Configure<FileStorageSettings>(configuration.GetSection("FileStorage"));
+
+        // JWT
         services.AddScoped<JwtTokenGenerator>();
 
         // الخدمات
@@ -40,6 +44,11 @@ public static class DependencyInjection
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<ITechnicianService, TechnicianService>();
         services.AddScoped<IServiceRequestService, ServiceRequestService>();
+
+        // المرحلة 4
+        services.AddScoped<IAssignmentService, AssignmentService>();
+        services.AddScoped<IRequestWorkflowService, RequestWorkflowService>();
+        services.AddScoped<IFileStorage, LocalFileStorage>();
 
         return services;
     }

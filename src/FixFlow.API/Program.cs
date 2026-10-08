@@ -1,7 +1,10 @@
 using System.Text;
 using FixFlow.Infrastructure;
 using FixFlow.Infrastructure.Identity;
+using FixFlow.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 
@@ -9,6 +12,12 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ---------- Infrastructure (DB + Identity + Services) ----------
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// مسار الرفع يبقى جوه فولدر مشروع الـ API (مش بيعتمد على مكان التشغيل)
+builder.Services.PostConfigure<FileStorageSettings>(settings =>
+{
+    settings.RootPath = Path.Combine(builder.Environment.ContentRootPath, settings.RootPath);
+});
 
 // ---------- JWT Authentication ----------
 var jwtSettings = builder.Configuration.GetSection("Jwt").Get<JwtSettings>()
@@ -87,6 +96,15 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+// تقديم الصور المرفوعة على الرابط /uploads/...
+var storageSettings = app.Services.GetRequiredService<IOptions<FileStorageSettings>>().Value;
+Directory.CreateDirectory(storageSettings.RootPath);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(storageSettings.RootPath),
+    RequestPath = storageSettings.RequestPath
+});
 
 app.UseAuthentication();   // لازم قبل UseAuthorization
 app.UseAuthorization();
