@@ -4,8 +4,10 @@ using FixFlow.Application.Requests;
 using FixFlow.Domain.Common;
 using FixFlow.Domain.Entities;
 using FixFlow.Domain.Enums;
+using FixFlow.Infrastructure.Automation;
 using FixFlow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace FixFlow.Infrastructure.Services;
 
@@ -13,11 +15,19 @@ public class ServiceRequestService : IServiceRequestService
 {
     private readonly AppDbContext _db;
     private readonly IAssignmentService _assignment;
+    private readonly IRequestEventPublisher _events;
+    private readonly AppUrlSettings _urls;
 
-    public ServiceRequestService(AppDbContext db, IAssignmentService assignment)
+    public ServiceRequestService(
+        AppDbContext db,
+        IAssignmentService assignment,
+        IRequestEventPublisher events,
+        IOptions<AppUrlSettings> urls)
     {
         _db = db;
         _assignment = assignment;
+        _events = events;
+        _urls = urls.Value;
     }
 
     public async Task<Result<ServiceRequestDto>> CreateAsync(string customerId, CreateServiceRequestRequest request)
@@ -42,7 +52,9 @@ public class ServiceRequestService : IServiceRequestService
         _db.ServiceRequests.Add(entity);
         await _db.SaveChangesAsync();
 
-        // التعيين التلقائي: لو ملقاش فني، الطلب يفضل Pending
+        await _events.PublishAsync(entity.Id, RequestEventType.Created);
+
+        // التعيين التلقائي: لو ملقاش فني، الطلب يفضل Pending (وJob إعادة المحاولة هيكمل)
         await _assignment.TryAssignAsync(entity.Id);
 
         var created = await _db.ServiceRequests.AsNoTracking().WithDetails()
@@ -152,6 +164,8 @@ public class ServiceRequestService : IServiceRequestService
         request.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
+        await _events.PublishAsync(request.Id, RequestEventType.Cancelled);
+
         return Result<ServiceRequestDto>.Ok(request.ToDto());
     }
 
@@ -177,6 +191,23 @@ public class ServiceRequestService : IServiceRequestService
                 .Select(p => new PhotoDto { Url = p.Url, Type = p.Type.ToString() })
                 .ToList()
         });
+    }
+
+    // Quick Share: صاحب الطلب أو الأدمن بس
+    public async Task<Result<ShareLinks>> GetShareLinksAsync(int id, string userId, string role)
+    {
+        var request = await _db.ServiceRequests.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id);
+
+        if (request is null)
+            return Result<ShareLinks>.Fail("Request not found.", ErrorType.NotFound);
+
+        var allowed = role == AppRoles.Admin
+                      || (role == AppRoles.Customer && request.CustomerId == userId);
+
+        if (!allowed)
+            return Result<ShareLinks>.Fail("You are not allowed to share this request.", ErrorType.Forbidden);
+
+        return Result<ShareLinks>.Ok(QuickShareLinks.Build(_urls.TrackingBaseUrl, request.TrackingToken, request.Title));
     }
 
     private async Task<int?> GetTechnicianProfileIdAsync(string userId)

@@ -1,0 +1,67 @@
+﻿<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>FixFlow SignalR Test</title>
+  <style>
+    body { font-family: Tahoma, Arial, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 12px; }
+    input { width: 100%; padding: 8px; margin: 4px 0; box-sizing: border-box; }
+    button { padding: 8px 14px; margin: 4px 4px 4px 0; cursor: pointer; }
+    pre { background: #111; color: #0f0; padding: 12px; min-height: 260px; overflow: auto; direction: ltr; text-align: left; }
+  </style>
+</head>
+<body>
+  <h2>اختبار SignalR</h2>
+
+  <label>JWT Token (سيبه فاضي لو هتتابع برابط التتبع من غير تسجيل دخول)</label>
+  <input id="token" placeholder="eyJhbGciOi..." />
+  <button id="connect">اتصال</button>
+  <span id="state">غير متصل</span>
+
+  <hr />
+
+  <label>Tracking Token (للمتابعة العامة)</label>
+  <input id="track" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+  <button id="join">متابعة الطلب</button>
+
+  <pre id="log"></pre>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+  <script>
+    const logEl = document.getElementById('log');
+    const log = (m) => { logEl.textContent = new Date().toLocaleTimeString() + '  ' + m + '\n' + logEl.textContent; };
+    let conn = null;
+
+    document.getElementById('connect').onclick = async () => {
+      const token = document.getElementById('token').value.trim();
+
+      conn = new signalR.HubConnectionBuilder()
+        .withUrl('/hubs/updates', token ? { accessTokenFactory: () => token } : {})
+        .withAutomaticReconnect()
+        .build();
+
+      conn.on('NotificationReceived', (n) => log('NOTIFICATION  [' + n.type + ']  ' + n.message));
+      conn.on('RequestUpdated', (u) => log('REQUEST #' + u.requestId + '  event=' + u.event + '  status=' + u.status + '  tech=' + (u.technicianName ?? '-')));
+
+      try {
+        await conn.start();
+        document.getElementById('state').textContent = 'متصل ✔';
+        log('connected');
+      } catch (e) {
+        log('connection error: ' + e);
+      }
+    };
+
+    document.getElementById('join').onclick = async () => {
+      if (!conn) { log('اتصل الأول'); return; }
+      const t = document.getElementById('track').value.trim();
+      try {
+        await conn.invoke('JoinTracking', t);
+        log('joined tracking ' + t);
+      } catch (e) {
+        log('join error: ' + e);
+      }
+    };
+  </script>
+</body>
+</html>

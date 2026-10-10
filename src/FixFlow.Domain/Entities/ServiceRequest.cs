@@ -23,10 +23,13 @@ public class ServiceRequest : BaseEntity
 
     public DateTime? AssignedAt { get; set; }
 
-    // آخر وقت يرد فيه الفني على العرض (هنفعّله بـ Hangfire في المرحلة 5)
+    // آخر وقت يرد فيه الفني على العرض
     public DateTime? AssignmentExpiresAt { get; set; }
 
     public DateTime? CompletedAt { get; set; }
+
+    // وقت التصعيد للأدمن (null = لسه ما اتصعّدش)
+    public DateTime? EscalatedAt { get; set; }
 
     // رابط التتبع (Quick Share) بدون تسجيل دخول
     public Guid TrackingToken { get; set; } = Guid.NewGuid();

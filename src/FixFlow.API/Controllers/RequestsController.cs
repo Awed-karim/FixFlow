@@ -104,7 +104,7 @@ public class RequestsController : ApiControllerBase
     [HttpPost("{id:int}/photos")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(6_000_000)]
-    public async Task<IActionResult> UploadPhoto(int id, [FromQuery] string type, [FromForm] IFormFile file)
+    public async Task<IActionResult> UploadPhoto(int id, [FromQuery] string type, IFormFile file)
     {
         if (file is null || file.Length == 0)
             return BadRequest(new { error = "File is required." });

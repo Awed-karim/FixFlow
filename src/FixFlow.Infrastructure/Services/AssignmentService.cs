@@ -1,8 +1,11 @@
 ﻿using FixFlow.Application.Common;
 using FixFlow.Application.Interfaces;
 using FixFlow.Domain.Enums;
+using FixFlow.Infrastructure.Automation;
 using FixFlow.Infrastructure.Persistence;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace FixFlow.Infrastructure.Services;
 
@@ -10,13 +13,22 @@ public class AssignmentService : IAssignmentService
 {
     private const double MaxDistanceKm = 50;       // أبعد مسافة مقبولة
     private const double RatingWeightKm = 2;       // كل نجمة تقييم = ميزة 2 كم
-    private const int OfferTimeoutMinutes = 2;     // مهلة رد الفني
 
     private readonly AppDbContext _db;
+    private readonly IBackgroundJobClient _jobs;
+    private readonly IRequestEventPublisher _events;
+    private readonly AutomationSettings _auto;
 
-    public AssignmentService(AppDbContext db)
+    public AssignmentService(
+        AppDbContext db,
+        IBackgroundJobClient jobs,
+        IRequestEventPublisher events,
+        IOptions<AutomationSettings> auto)
     {
         _db = db;
+        _jobs = jobs;
+        _events = events;
+        _auto = auto.Value;
     }
 
     public async Task<bool> TryAssignAsync(int requestId)
@@ -28,7 +40,7 @@ public class AssignmentService : IAssignmentService
         if (request is null || request.Status != RequestStatus.Pending)
             return false;
 
-        // 1) فنيين رفضوا الطلب ده قبل كده
+        // 1) فنيين رفضوا الطلب ده (أو انتهت مهلتهم)
         var rejectedIds = request.Rejections.Select(x => x.TechnicianProfileId).ToList();
 
         // 2) فنيين مشغولين (عندهم طلب شغال)
@@ -70,10 +82,26 @@ public class AssignmentService : IAssignmentService
         request.TechnicianProfile = best.Tech;
         request.Status = RequestStatus.Assigned;
         request.AssignedAt = now;
-        request.AssignmentExpiresAt = now.AddMinutes(OfferTimeoutMinutes);
+        request.AssignmentExpiresAt = now.AddSeconds(_auto.OfferTimeoutSeconds);
         request.UpdatedAt = now;
 
         await _db.SaveChangesAsync();
+
+        // جدولة Job المهلة: لو الفني ما ردش، يتحول لفني تاني
+        var requestIdLocal = request.Id;
+        var techIdLocal = best.Tech.Id;
+        try
+        {
+            _jobs.Schedule<AutomationJobs>(
+                j => j.CheckOfferTimeoutAsync(requestIdLocal, techIdLocal),
+                TimeSpan.FromSeconds(_auto.OfferTimeoutSeconds + 2));
+        }
+        catch
+        {
+            // لو الجدولة فشلت، شبكة الأمان (ExpireOverdueOffersAsync) هتلتقطه
+        }
+
+        await _events.PublishAsync(requestIdLocal, RequestEventType.Assigned);
         return true;
     }
 }

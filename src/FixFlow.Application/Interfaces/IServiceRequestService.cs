@@ -10,4 +10,5 @@ public interface IServiceRequestService
     Task<Result<ServiceRequestDto>> GetByIdAsync(int id, string userId, string role);
     Task<Result<ServiceRequestDto>> CancelAsync(int id, string userId, string role);
     Task<Result<TrackingDto>> TrackAsync(Guid token);
+    Task<Result<ShareLinks>> GetShareLinksAsync(int id, string userId, string role);
 }

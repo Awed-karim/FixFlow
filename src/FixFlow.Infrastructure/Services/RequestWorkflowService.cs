@@ -18,12 +18,18 @@ public class RequestWorkflowService : IRequestWorkflowService
     private readonly AppDbContext _db;
     private readonly IAssignmentService _assignment;
     private readonly IFileStorage _storage;
+    private readonly IRequestEventPublisher _events;
 
-    public RequestWorkflowService(AppDbContext db, IAssignmentService assignment, IFileStorage storage)
+    public RequestWorkflowService(
+        AppDbContext db,
+        IAssignmentService assignment,
+        IFileStorage storage,
+        IRequestEventPublisher events)
     {
         _db = db;
         _assignment = assignment;
         _storage = storage;
+        _events = events;
     }
 
     // ---------- الأدمن: إعادة محاولة التعيين ----------
@@ -47,17 +53,17 @@ public class RequestWorkflowService : IRequestWorkflowService
     // ---------- الفني ----------
 
     public Task<Result<ServiceRequestDto>> AcceptAsync(int id, string userId)
-        => TechnicianTransitionAsync(id, userId, RequestStatus.Accepted,
+        => TechnicianTransitionAsync(id, userId, RequestStatus.Accepted, RequestEventType.Accepted,
             apply: r => r.AssignmentExpiresAt = null);
 
     public Task<Result<ServiceRequestDto>> StartTravelAsync(int id, string userId)
-        => TechnicianTransitionAsync(id, userId, RequestStatus.OnTheWay);
+        => TechnicianTransitionAsync(id, userId, RequestStatus.OnTheWay, RequestEventType.OnTheWay);
 
     public Task<Result<ServiceRequestDto>> StartWorkAsync(int id, string userId)
-        => TechnicianTransitionAsync(id, userId, RequestStatus.InProgress);
+        => TechnicianTransitionAsync(id, userId, RequestStatus.InProgress, RequestEventType.WorkStarted);
 
     public Task<Result<ServiceRequestDto>> CompleteAsync(int id, string userId)
-        => TechnicianTransitionAsync(id, userId, RequestStatus.Completed,
+        => TechnicianTransitionAsync(id, userId, RequestStatus.Completed, RequestEventType.Completed,
             validate: r =>
             {
                 var hasBefore = r.Photos.Any(p => p.Type == PhotoType.Before);
@@ -100,7 +106,9 @@ public class RequestWorkflowService : IRequestWorkflowService
         request.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        // التعيين التلقائي للفني اللي بعده
+        await _events.PublishAsync(request.Id, RequestEventType.OfferRejected);
+
+        // التعيين التلقائي للفني اللي بعده (وبينشر Assigned لو لقى)
         await _assignment.TryAssignAsync(request.Id);
 
         return Result<ServiceRequestDto>.Ok(await GetDtoAsync(request.Id));
@@ -141,6 +149,8 @@ public class RequestWorkflowService : IRequestWorkflowService
         request.Status = RequestStatus.Reviewed;
         request.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+
+        await _events.PublishAsync(request.Id, RequestEventType.Reviewed);
 
         return Result<ServiceRequestDto>.Ok(request.ToDto());
     }
@@ -213,9 +223,9 @@ public class RequestWorkflowService : IRequestWorkflowService
 
     // ---------- Helpers ----------
 
-    // نمط واحد لكل انتقالات الفني: تحميل + صلاحية + State Machine + تحقق + تنفيذ + حفظ
+    // نمط واحد لكل انتقالات الفني: تحميل + صلاحية + State Machine + تحقق + تنفيذ + حفظ + نشر الحدث
     private async Task<Result<ServiceRequestDto>> TechnicianTransitionAsync(
-        int id, string userId, RequestStatus to,
+        int id, string userId, RequestStatus to, RequestEventType evt,
         Func<ServiceRequest, string?>? validate = null,
         Action<ServiceRequest>? apply = null)
     {
@@ -237,6 +247,9 @@ public class RequestWorkflowService : IRequestWorkflowService
         apply?.Invoke(request);
 
         await _db.SaveChangesAsync();
+
+        await _events.PublishAsync(request.Id, evt);
+
         return Result<ServiceRequestDto>.Ok(request.ToDto());
     }
 
