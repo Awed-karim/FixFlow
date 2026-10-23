@@ -1,0 +1,12 @@
+**/bin
+**/obj
+**/node_modules
+**/.vs
+**/.git
+.git
+.github
+client
+tests
+**/uploads
+.env
+*.md

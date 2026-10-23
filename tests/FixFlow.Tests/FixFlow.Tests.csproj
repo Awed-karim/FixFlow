@@ -22,6 +22,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FixFlow.Application\FixFlow.Application.csproj" />
+    <ProjectReference Include="..\..\src\FixFlow.Domain\FixFlow.Domain.csproj" />
+    <ProjectReference Include="..\..\src\FixFlow.Infrastructure\FixFlow.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\FixFlow.API\FixFlow.API.csproj" />
   </ItemGroup>
 
 </Project>

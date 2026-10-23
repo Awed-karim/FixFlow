@@ -1,0 +1,66 @@
+name: fixflow
+
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Express
+      MSSQL_SA_PASSWORD: ${SA_PASSWORD:?missing}
+    volumes:
+      - sqldata:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/${IMAGE_OWNER:?missing}/fixflow-api:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: "Server=db,1433;Database=FixFlowDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+      Jwt__Key: ${JWT_KEY:?missing}
+      SeedAdmin__Email: ${ADMIN_EMAIL:-admin@fixflow.com}
+      SeedAdmin__Password: ${ADMIN_PASSWORD:?missing}
+      App__TrackingBaseUrl: ${PUBLIC_URL:?missing}/track
+      Webhook__Enabled: ${WEBHOOK_ENABLED:-false}
+      Webhook__Url: ${WEBHOOK_URL:-}
+      Webhook__Secret: ${WEBHOOK_SECRET:-change-me-webhook-secret}
+      Swagger__Enabled: ${SWAGGER_ENABLED:-false}
+    volumes:
+      - uploads:/app/uploads
+    restart: unless-stopped
+
+  client:
+    image: ghcr.io/${IMAGE_OWNER}/fixflow-client:latest
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # Caddy: بوابة الإنترنت. بيجيب شهادة HTTPS تلقائياً لو DOMAIN اسم دومين
+  caddy:
+    image: caddy:2
+    environment:
+      DOMAIN: ${DOMAIN:?missing}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - client
+    restart: unless-stopped
+
+volumes:
+  sqldata:
+  uploads:
+  caddy_data:
+  caddy_config:

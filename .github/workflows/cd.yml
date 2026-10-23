@@ -1,0 +1,98 @@
+name: CD
+
+# يشتغل بعد ما CI يخلص على main
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  # ---------- 1) بناء الصور ورفعها على GHCR ----------
+  publish:
+    name: Publish images
+    runs-on: ubuntu-latest
+    # بس لو CI نجح وكان من Push (مش Pull Request)
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # اسم الصورة لازم يكون بحروف صغيرة
+      - name: Lowercase owner
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API
+        run: |
+          docker build -f src/FixFlow.API/Dockerfile \
+            -t ghcr.io/$OWNER/fixflow-api:latest \
+            -t ghcr.io/$OWNER/fixflow-api:${SHA::7} .
+          docker push --all-tags ghcr.io/$OWNER/fixflow-api
+
+      - name: Build and push client
+        run: |
+          docker build \
+            -t ghcr.io/$OWNER/fixflow-client:latest \
+            -t ghcr.io/$OWNER/fixflow-client:${SHA::7} ./client
+          docker push --all-tags ghcr.io/$OWNER/fixflow-client
+
+  # ---------- 2) النشر على السيرفر ----------
+  deploy:
+    name: Deploy to server
+    runs-on: ubuntu-latest
+    needs: publish
+    # بيشتغل بس لو إنت فعّلت DEPLOY_ENABLED
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Deploy over SSH
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+
+          # 1) نبعت ملفات التشغيل
+          scp -i ~/.ssh/deploy_key docker-compose.prod.yml "$SSH_USER@$HOST:~/fixflow/docker-compose.yml"
+          scp -i ~/.ssh/deploy_key Caddyfile "$SSH_USER@$HOST:~/fixflow/Caddyfile"
+
+          # 2) نسجّل دخول على GHCR من السيرفر (بتوكن مؤقت)
+          echo "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key "$SSH_USER@$HOST" \
+            "docker login ghcr.io -u $GHCR_USER --password-stdin"
+
+          # 3) نسحب الصور الجديدة ونشغّلها
+          ssh -i ~/.ssh/deploy_key "$SSH_USER@$HOST" \
+            "cd ~/fixflow && docker compose pull && docker compose up -d --remove-orphans && docker image prune -f"
+
+      - name: Smoke test (health check)
+        env:
+          URL: ${{ vars.DEPLOY_URL }}
+        run: |
+          curl --fail --silent --show-error \
+            --retry 12 --retry-delay 10 --retry-connrefused \
+            "$URL/api/health"

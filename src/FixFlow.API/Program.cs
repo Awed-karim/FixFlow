@@ -4,9 +4,11 @@ using FixFlow.Application.Interfaces;
 using FixFlow.Infrastructure;
 using FixFlow.Infrastructure.Automation;
 using FixFlow.Infrastructure.Identity;
+using FixFlow.Infrastructure.Persistence;
 using FixFlow.Infrastructure.Storage;
 using Hangfire;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -26,6 +28,16 @@ builder.Services.PostConfigure<FileStorageSettings>(settings =>
 // ---------- JWT Authentication ----------
 var jwtSettings = builder.Configuration.GetSection("Jwt").Get<JwtSettings>()
     ?? throw new InvalidOperationException("Jwt section is missing in appsettings.json");
+
+// حماية: خارج التطوير ممنوع مفتاح ضعيف أو مفتاح المثال
+if (!builder.Environment.IsDevelopment() &&
+    (jwtSettings.Key.Length < 32 ||
+     jwtSettings.Key.Contains("Dev-Secret") ||
+     jwtSettings.Key.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase)))
+{
+    throw new InvalidOperationException(
+        "Jwt:Key is weak or still a sample value. Set a strong random secret (32+ chars) in the Jwt__Key environment variable.");
+}
 
 builder.Services
     .AddAuthentication(options =>
@@ -119,14 +131,34 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
-// ---------- Seed: Roles + Admin ----------
+// ---------- Database (م7): تطبيق الـ Migrations + Seed ----------
+// في Docker الداتابيز بتبدأ فاضية، فالـ API هو اللي يبنيها.
+// الـ retry لأن SQL Server ممكن يكون لسه بيصحى.
 using (var scope = app.Services.CreateScope())
 {
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+    for (var attempt = 1; ; attempt++)
+    {
+        try
+        {
+            await db.Database.MigrateAsync();
+            break;
+        }
+        catch (Exception ex) when (attempt < 10)
+        {
+            logger.LogWarning(ex, "Database is not ready (attempt {Attempt}/10). Retrying in 5 seconds...", attempt);
+            await Task.Delay(TimeSpan.FromSeconds(5));
+        }
+    }
+
     await IdentitySeeder.SeedAsync(scope.ServiceProvider);
 }
 
 // ---------- Pipeline ----------
-if (app.Environment.IsDevelopment())
+// Swagger: في Development، أو لو الإعداد Swagger:Enabled = true
+if (app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("Swagger:Enabled"))
 {
     app.UseSwagger();
     app.UseSwaggerUI();
@@ -147,11 +179,21 @@ app.UseStaticFiles(new StaticFileOptions
 app.UseAuthentication();   // لازم قبل UseAuthorization
 app.UseAuthorization();
 
-// لوحة Hangfire: متاحة من نفس الجهاز بس (localhost)
-app.UseHangfireDashboard("/hangfire");
+// لوحة Hangfire: في Development بس (من نفس الجهاز). في Docker/Production مقفولة.
+if (app.Environment.IsDevelopment())
+{
+    app.UseHangfireDashboard("/hangfire");
+}
 
 app.MapControllers();
 app.MapHub<UpdatesHub>("/hubs/updates");
+
+// فحص الصحة: بنستخدمه بعد النشر للتأكد إن الـ API والداتابيز شغالين
+app.MapGet("/api/health", async (AppDbContext db) =>
+{
+    var ok = await db.Database.CanConnectAsync();
+    return ok ? Results.Ok(new { status = "healthy" }) : Results.StatusCode(503);
+});
 
 // تسجيل المهام الدورية (إعادة المحاولة، التصعيد، التقرير اليومي)
 RecurringJobsRegistrar.Register(app.Services);

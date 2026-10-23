@@ -1,0 +1,63 @@
+name: CI
+
+# يشتغل عند أي Push أو Pull Request
+on:
+  push:
+  pull_request:
+
+jobs:
+  # ---------- 1) الباك اند: بناء + اختبارات ----------
+  backend:
+    name: Backend (build + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Test
+        run: dotnet test --no-build -c Release --verbosity normal
+
+  # ---------- 2) الفرونت: بناء ----------
+  frontend:
+    name: Frontend (build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+  # ---------- 3) التأكد إن Dockerfiles بتبني ----------
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -f src/FixFlow.API/Dockerfile -t fixflow-api:ci .
+
+      - name: Build client image
+        run: docker build -t fixflow-client:ci ./client
